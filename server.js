@@ -11,7 +11,8 @@ app.use(express.json());
 
 // 🔧 Supabase
 const supabaseUrl = 'https://nymqqcobbzmnngkgxczc.supabase.co';
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im55bXFxY29iYnptbm5na2d4Y3pjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0MDkyODY4MywiZXhwIjoyMDU2NTA0NjgzfQ.zrh4GnP8BnbMZ_oa2dzhoP1Y_8RJSxd-oktLP00wREI'; // zmień na SECRET z Supabase!
+const supabaseKey = 'const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im55bXFxY29iYnptbm5na2d4Y3pjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0MDkyODY4MywiZXhwIjoyMDU2NTA0NjgzfQ.zrh4GnP8BnbMZ_oa2dzhoP1Y_8RJSxd-oktLP00wREI';
+'; // <-- ZMIEN NA SWOJ SECRET ROLE!
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // 🔧 Dane DPD
@@ -24,16 +25,21 @@ const dpdLabelsUrl = 'https://dpdservices.dpd.com.pl/public/shipment/v1/generate
 
 const authString = Buffer.from(`${dpdLogin}:${dpdPassword}`).toString('base64');
 
+// Endpoint testowy
 app.get('/', (req, res) => {
-  res.send('DPD Server działa!');
+  res.send('🚀 DPD Server działa!');
 });
 
+// ======================
+// GENERUJ PACZKĘ DPD
+// ======================
 app.post('/api/dpd/generate-package', async (req, res) => {
   const { orderId } = req.body;
 
   if (!orderId) return res.status(400).json({ error: 'Brak orderId!' });
 
   try {
+    // Pobierz adres z bazy
     const { data: address, error } = await supabase
       .from('order_addresses')
       .select('*')
@@ -42,7 +48,23 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       .single();
 
     if (error || !address) {
+      console.error('❌ Brak adresu dostawy:', error);
       return res.status(404).json({ error: 'Brak adresu dostawy!' });
+    }
+
+    console.log('✅ Adres dostawy:', address);
+
+    // Walidacja pól
+    const postalCode = (address.postcode || '').replace(/[^0-9]/g, '');
+    const phone = (address.phone || '').replace(/[^0-9]/g, '');
+    const phoneFormatted = phone.startsWith('48') ? phone : `48${phone}`;
+
+    if (!postalCode || postalCode.length < 5) {
+      return res.status(400).json({ error: `Niepoprawny kod pocztowy: ${postalCode}` });
+    }
+
+    if (!phoneFormatted || phoneFormatted.length !== 11) {
+      return res.status(400).json({ error: `Niepoprawny numer telefonu: ${phoneFormatted}` });
     }
 
     const payload = {
@@ -55,8 +77,8 @@ app.post('/api/dpd/generate-package', async (req, res) => {
           address: address.street1,
           city: address.city,
           countryCode: address.country_code || 'PL',
-          postalCode: address.postcode.replace(/[^0-9]/g, ''),
-          phone: address.phone.replace(/[^0-9]/g, '').padStart(9, '48'),
+          postalCode: postalCode,
+          phone: phoneFormatted,
           email: 'zamowienia@smilk.pl'
         },
         sender: {
@@ -77,6 +99,8 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       }]
     };
 
+    console.log('➡️ Payload wysyłany do DPD:', JSON.stringify(payload, null, 2));
+
     const dpdRes = await axios.post(dpdPackagesUrl, payload, {
       headers: {
         'Authorization': `Basic ${authString}`,
@@ -85,7 +109,13 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       }
     });
 
+    console.log('⬅️ Surowa odpowiedź z DPD:', dpdRes.data);
+
     const dpdData = dpdRes.data;
+
+    if (!dpdData.sessionId || !dpdData.packages[0]?.parcels[0]?.waybill) {
+      return res.status(400).json({ error: 'Brak sessionId lub waybill!' });
+    }
 
     res.json({
       sessionId: dpdData.sessionId,
@@ -94,16 +124,19 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('❌ Błąd:', err.response?.data || err.message);
+    console.error('❌ Błąd DPD:', err.response?.data || err.message);
     res.status(500).json({ error: 'Błąd DPD', details: err.message });
   }
 });
 
+// ======================
+// POBIERZ ETYKIETĘ DPD
+// ======================
 app.post('/api/dpd/download-label', async (req, res) => {
   const { orderId, sessionId, waybill } = req.body;
 
   if (!orderId || !sessionId || !waybill) {
-    return res.status(400).json({ error: 'Brak danych!' });
+    return res.status(400).json({ error: 'Brak wymaganych danych!' });
   }
 
   const payload = {
@@ -128,6 +161,8 @@ app.post('/api/dpd/download-label', async (req, res) => {
     variant: 'STANDARD'
   };
 
+  console.log('➡️ Payload pobierania etykiety:', JSON.stringify(payload, null, 2));
+
   try {
     const dpdRes = await axios.post(dpdLabelsUrl, payload, {
       headers: {
@@ -138,6 +173,11 @@ app.post('/api/dpd/download-label', async (req, res) => {
     });
 
     const labelData = dpdRes.data.documentData;
+
+    if (!labelData) {
+      console.error('❌ Brak danych etykiety!');
+      return res.status(400).json({ error: 'Brak danych etykiety!' });
+    }
 
     const buffer = Buffer.from(labelData, 'base64');
     res.setHeader('Content-Type', 'application/pdf');
