@@ -71,57 +71,54 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     const phoneRaw = (address.phone || '').replace(/[^0-9]/g, '');
     const phone = phoneRaw.startsWith('48') ? phoneRaw : `48${phoneRaw}`;
 
-    const payload = {
-      generationPolicy: 'STOP_ON_FIRST_ERROR',
-      packages: [
-        {
-          reference: pkgRef,
-          receiver: {
-            company: address.company || `${address.firstname} ${address.lastname}`,
-            name: `${address.firstname} ${address.lastname}`,
-            address: address.street1,
-            city: address.city,
-            countryCode: address.country_code || 'PL',
-            postalCode,
-            phone,
-            email: order.email || 'zamowienia@smilk.pl'
-          },
-          sender: {
-            company: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
-            name: 'Nicolas Łusiak',
-            address: 'Wyrzyska 48',
-            city: 'Sadki',
-            countryCode: 'PL',
-            postalCode: '89110',
-            phone: '48661103013',
-            email: 'zamowienia@smilk.pl'
-          },
-          payerFID: parseInt(dpdFid),
-          parcels: [
-            {
-              reference: parcelRef,
-              weight: 10
-            }
-          ]
-        }
-      ]
+    const packageData = {
+      reference: pkgRef,
+      receiver: {
+        company: address.company || `${address.firstname} ${address.lastname}`,
+        name: `${address.firstname} ${address.lastname}`,
+        address: address.street1,
+        city: address.city,
+        countryCode: address.country_code || 'PL',
+        postalCode,
+        phone,
+        email: order.email || 'zamowienia@smilk.pl'
+      },
+      sender: {
+        company: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
+        name: 'Nicolas Łusiak',
+        address: 'Wyrzyska 48',
+        city: 'Sadki',
+        countryCode: 'PL',
+        postalCode: '89110',
+        phone: '48661103013',
+        email: 'zamowienia@smilk.pl'
+      },
+      payerFID: parseInt(dpdFid),
+      parcels: [{
+        reference: parcelRef,
+        weight: 10
+      }]
     };
 
-    // Dodajemy COD i services
-    if (order.payment_method?.toLowerCase().includes('pobranie')) {
-      payload.packages[0].services = [
-        { code: 'COD' }
-      ];
+    // ✅ Dodajemy COD jeśli jest pobranie
+    let isCod = false;
 
-      payload.packages[0].cod = {
+    if (order.payment_method?.toLowerCase().includes('pobranie')) {
+      isCod = true;
+      packageData.cod = {
         amount: parseFloat(order.sum),
         currency: order.currency_name || 'PLN',
         beneficiary: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
         accountNumber: 'PL08116022020000000628769404'
       };
 
-      console.log('✅ Dodano COD i service:', payload.packages[0].cod);
+      console.log('✅ Dodano COD:', packageData.cod);
     }
+
+    const payload = {
+      generationPolicy: 'STOP_ON_FIRST_ERROR',
+      packages: [packageData]
+    };
 
     console.log('➡️ Payload wysyłany do DPD:', JSON.stringify(payload, null, 2));
 
@@ -144,6 +141,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       waybill: dpdData.packages[0].parcels[0].waybill,
       pkgRef,
       parcelRef,
+      isCod,
       rawResponse: dpdData
     });
 
