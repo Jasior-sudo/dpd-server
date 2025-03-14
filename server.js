@@ -40,7 +40,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
   }
 
   try {
-    // 1️⃣ Pobieramy adres dostawy
+    // Pobierz adres
     const { data: address, error: addressError } = await supabase
       .from('order_addresses')
       .select('*')
@@ -49,11 +49,10 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       .single();
 
     if (addressError || !address) {
-      console.error('❌ Brak adresu dostawy:', addressError);
       return res.status(404).json({ error: 'Brak adresu dostawy!' });
     }
 
-    // 2️⃣ Pobieramy dane zamówienia
+    // Pobierz zamówienie
     const { data: order, error: orderError } = await supabase
       .from('orders')
       .select('*')
@@ -61,17 +60,8 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       .maybeSingle();
 
     if (orderError || !order) {
-      console.error('❌ Brak zamówienia:', orderError);
       return res.status(404).json({ error: 'Brak zamówienia!' });
     }
-
-    // Debug!
-    console.log('🔎 payment_method:', order.payment_method);
-    console.log('🔎 shipping_method:', order.shipping_method);
-
-    const isCOD =
-      order.payment_method?.toLowerCase().includes('pobranie') ||
-      order.shipping_method?.toLowerCase().includes('pobranie');
 
     const now = Date.now();
     const pkgRef = `PKG-${orderId}-${now}`;
@@ -81,7 +71,6 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     const phoneRaw = (address.phone || '').replace(/[^0-9]/g, '');
     const phone = phoneRaw.startsWith('48') ? phoneRaw : `48${phoneRaw}`;
 
-    // Payload bazowy
     const payload = {
       generationPolicy: 'STOP_ON_FIRST_ERROR',
       packages: [
@@ -95,7 +84,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
             countryCode: address.country_code || 'PL',
             postalCode,
             phone,
-            email: order.email || 'zamowienia@smilk.pl',
+            email: order.email || 'zamowienia@smilk.pl'
           },
           sender: {
             company: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
@@ -105,38 +94,43 @@ app.post('/api/dpd/generate-package', async (req, res) => {
             countryCode: 'PL',
             postalCode: '89110',
             phone: '48661103013',
-            email: 'zamowienia@smilk.pl',
+            email: 'zamowienia@smilk.pl'
           },
           payerFID: parseInt(dpdFid),
           parcels: [
             {
               reference: parcelRef,
-              weight: 10,
-            },
-          ],
-        },
-      ],
+              weight: 10
+            }
+          ]
+        }
+      ]
     };
 
-    // ✅ DODAJEMY COD, jeśli jest wymagane
-    if (isCOD) {
+    // Dodajemy COD i services
+    if (order.payment_method?.toLowerCase().includes('pobranie')) {
+      payload.packages[0].services = [
+        { code: 'COD' }
+      ];
+
       payload.packages[0].cod = {
         amount: parseFloat(order.sum),
         currency: order.currency_name || 'PLN',
         beneficiary: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
-        accountNumber: 'PL08116022020000000628769404',
+        accountNumber: 'PL08116022020000000628769404'
       };
-      console.log('✅ Dodano COD do paczki:', payload.packages[0].cod);
+
+      console.log('✅ Dodano COD i service:', payload.packages[0].cod);
     }
 
     console.log('➡️ Payload wysyłany do DPD:', JSON.stringify(payload, null, 2));
 
     const dpdRes = await axios.post(dpdPackagesUrl, payload, {
       headers: {
-        Authorization: `Basic ${authString}`,
+        'Authorization': `Basic ${authString}`,
         'Content-Type': 'application/json',
-        'x-dpd-fid': dpdFid,
-      },
+        'x-dpd-fid': dpdFid
+      }
     });
 
     const dpdData = dpdRes.data;
@@ -150,18 +144,17 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       waybill: dpdData.packages[0].parcels[0].waybill,
       pkgRef,
       parcelRef,
-      isCOD,
-      rawResponse: dpdData,
+      rawResponse: dpdData
     });
+
   } catch (err) {
     console.error('❌ Błąd DPD:', err?.response?.data || err.message);
     res.status(500).json({
       error: 'Błąd DPD',
-      details: err?.response?.data || err.message,
+      details: err?.response?.data || err.message
     });
   }
 });
-
 
 // ==========================
 // POBIERZ ETYKIETĘ DPD
