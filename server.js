@@ -170,9 +170,8 @@ app.post('/api/dpd/download-label', async (req, res) => {
             ]
           }
         ],
-        type: 'COD_DOMESTIC'
-      },
-      documentId: `LABEL-${orderId}`
+        type: 'DOMESTIC'  // <-- WAŻNE: zmiana na DOMESTIC!
+      }
     },
     outputDocFormat: 'PDF',
     format: 'LBL_PRINTER',
@@ -210,6 +209,7 @@ app.post('/api/dpd/download-label', async (req, res) => {
     });
   }
 });
+
 
 app.listen(PORT, () => {
   console.log(`🚀 Serwer DPD działa na http://localhost:${PORT}`);
