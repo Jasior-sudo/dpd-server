@@ -157,6 +157,19 @@ app.post('/api/dpd/download-label', async (req, res) => {
     return res.status(400).json({ error: 'Brak wymaganych danych!' });
   }
 
+  // Pobieramy zamówienie, żeby sprawdzić czy to COD
+  const { data: order, error: orderError } = await supabase
+    .from('orders')
+    .select('*')
+    .eq('order_id', orderId)
+    .single();
+
+  if (orderError || !order) {
+    return res.status(404).json({ error: 'Brak zamówienia!' });
+  }
+
+  const sessionType = order.payment_method?.toLowerCase().includes('pobranie') ? 'COD_DOMESTIC' : 'DOMESTIC';
+
   const payload = {
     labelSearchParams: {
       policy: 'STOP_ON_FIRST_ERROR',
@@ -169,7 +182,7 @@ app.post('/api/dpd/download-label', async (req, res) => {
             waybill
           }]
         }],
-        type: 'DOMESTIC'
+        type: sessionType
       },
       documentId: `LABEL-${orderId}`
     },
