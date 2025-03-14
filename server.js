@@ -158,13 +158,14 @@ app.post('/api/dpd/generate-package', async (req, res) => {
 // POBIERZ ETYKIETĘ DPD
 // ==========================
 app.post('/api/dpd/download-label', async (req, res) => {
-  const { orderId, sessionId, waybill, pkgRef, parcelRef, isCod } = req.body;
+  const { orderId, sessionId, waybill, pkgRef, parcelRef } = req.body;
 
   if (!orderId || !sessionId || !waybill || !pkgRef || !parcelRef) {
     return res.status(400).json({ error: 'Brak wymaganych danych!' });
   }
 
-  const sessionType = isCod ? 'COD_DOMESTIC' : 'DOMESTIC';
+  // ✅ ZAWSZE DOMESTIC (nawet dla COD!)
+  const sessionType = 'DOMESTIC';
 
   const payload = {
     labelSearchParams: {
@@ -218,6 +219,7 @@ app.post('/api/dpd/download-label', async (req, res) => {
     });
   }
 });
+
 
 // ==========================
 // START SERVERA
