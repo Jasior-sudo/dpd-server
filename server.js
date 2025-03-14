@@ -38,7 +38,6 @@ app.post('/api/dpd/generate-package', async (req, res) => {
   if (!orderId) return res.status(400).json({ error: 'Brak orderId!' });
 
   try {
-    // Pobierz adres z bazy
     const { data: address, error } = await supabase
       .from('order_addresses')
       .select('*')
@@ -51,20 +50,9 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       return res.status(404).json({ error: 'Brak adresu dostawy!' });
     }
 
-    console.log('✅ Adres dostawy:', address);
-
-    // Walidacja pól
     const postalCode = (address.postcode || '').replace(/[^0-9]/g, '');
     const phone = (address.phone || '').replace(/[^0-9]/g, '');
     const phoneFormatted = phone.startsWith('48') ? phone : `48${phone}`;
-
-    if (!postalCode || postalCode.length < 5) {
-      return res.status(400).json({ error: `Niepoprawny kod pocztowy: ${postalCode}` });
-    }
-
-    if (!phoneFormatted || phoneFormatted.length !== 11) {
-      return res.status(400).json({ error: `Niepoprawny numer telefonu: ${phoneFormatted}` });
-    }
 
     const payload = {
       generationPolicy: 'STOP_ON_FIRST_ERROR',
@@ -76,7 +64,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
           address: address.street1,
           city: address.city,
           countryCode: address.country_code || 'PL',
-          postalCode: postalCode,
+          postalCode,
           phone: phoneFormatted,
           email: 'zamowienia@smilk.pl'
         },
@@ -108,7 +96,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       }
     });
 
-    console.log('⬅️ Surowa odpowiedź z DPD:', dpdRes.data);
+    console.log('✅ Odpowiedź z DPD:', dpdRes.data);
 
     const dpdData = dpdRes.data;
 
@@ -123,8 +111,11 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('❌ Błąd DPD:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Błąd DPD', details: err.message });
+    console.error('❌ Błąd DPD:', err?.response?.data || err.message);
+    res.status(500).json({
+      error: 'Błąd DPD',
+      details: err?.response?.data || err.message
+    });
   }
 });
 
