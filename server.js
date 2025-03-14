@@ -11,7 +11,7 @@ app.use(express.json());
 
 // 🔧 Supabase
 const supabaseUrl = 'https://nymqqcobbzmnngkgxczc.supabase.co';
-const supabaseKey = 'TWÓJ_SUPABASE_SERVICE_ROLE_KEY'; // zmień na SECRET z Supabase!
+const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im55bXFxY29iYnptbm5na2d4Y3pjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0MDkyODY4MywiZXhwIjoyMDU2NTA0NjgzfQ.zrh4GnP8BnbMZ_oa2dzhoP1Y_8RJSxd-oktLP00wREI'; // zmień na SECRET z Supabase!
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // 🔧 Dane DPD
