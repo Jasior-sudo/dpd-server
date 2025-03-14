@@ -54,37 +54,40 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     const phone = (address.phone || '').replace(/[^0-9]/g, '');
     const phoneFormatted = phone.startsWith('48') ? phone : `48${phone}`;
 
-    const payload = {
-      generationPolicy: 'STOP_ON_FIRST_ERROR',
-      packages: [{
-        reference: `PKG-${orderId}`,
-        receiver: {
-          company: address.company || `${address.firstname} ${address.lastname}`,
-          name: `${address.firstname} ${address.lastname}`,
-          address: address.street1,
-          city: address.city,
-          countryCode: address.country_code || 'PL',
-          postalCode,
-          phone: phoneFormatted,
-          email: 'zamowienia@smilk.pl'
-        },
-        sender: {
-          company: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
-          name: 'Nicolas Łusiak',
-          address: 'Wyrzyska 48',
-          city: 'Sadki',
-          countryCode: 'PL',
-          postalCode: '89110',
-          phone: '48661103013',
-          email: 'zamowienia@smilk.pl'
-        },
-        payerFID: parseInt(dpdFid),
-        parcels: [{
-          reference: `PARCEL-${orderId}`,
-          weight: 10
-        }]
-      }]
-    };
+   const now = Date.now();
+
+const payload = {
+  generationPolicy: 'STOP_ON_FIRST_ERROR',
+  packages: [{
+    reference: `PKG-${orderId}-${now}`,
+    receiver: {
+      company: address.company || `${address.firstname} ${address.lastname}`,
+      name: `${address.firstname} ${address.lastname}`,
+      address: address.street1,
+      city: address.city,
+      countryCode: address.country_code || 'PL',
+      postalCode,
+      phone: phoneFormatted,
+      email: 'zamowienia@smilk.pl'
+    },
+    sender: {
+      company: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
+      name: 'Nicolas Łusiak',
+      address: 'Wyrzyska 48',
+      city: 'Sadki',
+      countryCode: 'PL',
+      postalCode: '89110',
+      phone: '48661103013',
+      email: 'zamowienia@smilk.pl'
+    },
+    payerFID: parseInt(dpdFid),
+    parcels: [{
+      reference: `PARCEL-${orderId}-${now}`,
+      weight: 10
+    }]
+  }]
+};
+
 
     console.log('➡️ Payload wysyłany do DPD:', JSON.stringify(payload, null, 2));
 
