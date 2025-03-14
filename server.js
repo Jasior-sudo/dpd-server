@@ -24,44 +24,48 @@ const dpdLabelsUrl = 'https://dpdservices.dpd.com.pl/public/shipment/v1/generate
 
 const authString = Buffer.from(`${dpdLogin}:${dpdPassword}`).toString('base64');
 
-app.get('/', (req, res) => {
-  res.send('🚀 DPD Server działa!');
-});
+// Test
+app.get('/', (req, res) => res.send('🚀 DPD Server działa!'));
 
-// ====================
 // GENERUJ PACZKĘ DPD
-// ====================
 app.post('/api/dpd/generate-package', async (req, res) => {
   const { orderId } = req.body;
 
-  if (!orderId) return res.status(400).json({ error: 'Brak orderId!' });
+  if (!orderId) {
+    return res.status(400).json({ error: 'Brak orderId!' });
+  }
 
   try {
-    const { data: address } = await supabase
+    const { data: address, error: addressError } = await supabase
       .from('order_addresses')
       .select('*')
       .eq('order_id', orderId)
       .eq('type', 'delivery')
       .single();
 
-    if (!address) return res.status(404).json({ error: 'Brak adresu dostawy!' });
+    if (addressError || !address) {
+      return res.status(404).json({ error: 'Brak adresu dostawy!' });
+    }
 
-    const { data: order } = await supabase
+    const { data: order, error: orderError } = await supabase
       .from('orders')
       .select('*')
       .eq('order_id', orderId)
       .maybeSingle();
 
-    if (!order) return res.status(404).json({ error: 'Brak zamówienia!' });
+    if (orderError || !order) {
+      return res.status(404).json({ error: 'Brak zamówienia!' });
+    }
 
     const now = Date.now();
     const pkgRef = `PKG-${orderId}-${now}`;
     const parcelRef = `PARCEL-${orderId}-${now}`;
+
     const postalCode = (address.postcode || '').replace(/[^0-9]/g, '');
     const phoneRaw = (address.phone || '').replace(/[^0-9]/g, '');
     const phone = phoneRaw.startsWith('48') ? phoneRaw : `48${phoneRaw}`;
 
-    const packagePayload = {
+    const payload = {
       generationPolicy: 'STOP_ON_FIRST_ERROR',
       packages: [
         {
@@ -92,31 +96,28 @@ app.post('/api/dpd/generate-package', async (req, res) => {
               reference: parcelRef,
               weight: 10
             }
-          ],
-          services: [],
+          ]
         }
       ]
     };
 
-    // COD (pobranie)
+    // Dodaj COD bez services
     if (order.payment_method?.toLowerCase().includes('pobranie')) {
-      packagePayload.packages[0].cod = {
+      payload.packages[0].cod = {
         amount: parseFloat(order.sum),
         currency: order.currency_name || 'PLN',
         beneficiary: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
         accountNumber: 'PL08116022020000000628769404'
       };
 
-      packagePayload.packages[0].services.push({ code: 'COD' });
-
-      console.log('✅ Dodano COD:', packagePayload.packages[0].cod);
+      console.log('✅ Dodano COD:', payload.packages[0].cod);
     }
 
-    console.log('➡️ Payload wysyłany do DPD:', JSON.stringify(packagePayload, null, 2));
+    console.log('➡️ Payload wysyłany do DPD:', JSON.stringify(payload, null, 2));
 
-    const dpdRes = await axios.post(dpdPackagesUrl, packagePayload, {
+    const dpdRes = await axios.post(dpdPackagesUrl, payload, {
       headers: {
-        Authorization: `Basic ${authString}`,
+        'Authorization': `Basic ${authString}`,
         'Content-Type': 'application/json',
         'x-dpd-fid': dpdFid
       }
@@ -125,7 +126,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     const dpdData = dpdRes.data;
 
     if (!dpdData.sessionId || !dpdData.packages?.[0]?.parcels?.[0]?.waybill) {
-      return res.status(400).json({ error: 'Brak sessionId lub waybill!', details: dpdData });
+      return res.status(400).json({ error: 'Brak sessionId lub waybill!' });
     }
 
     res.json({
@@ -133,9 +134,9 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       waybill: dpdData.packages[0].parcels[0].waybill,
       pkgRef,
       parcelRef,
-      rawResponse: dpdData,
-      isCod: order.payment_method?.toLowerCase().includes('pobranie')
+      rawResponse: dpdData
     });
+
   } catch (err) {
     console.error('❌ Błąd DPD:', err?.response?.data || err.message);
     res.status(500).json({
@@ -145,19 +146,15 @@ app.post('/api/dpd/generate-package', async (req, res) => {
   }
 });
 
-// ====================
 // POBIERZ ETYKIETĘ DPD
-// ====================
 app.post('/api/dpd/download-label', async (req, res) => {
-  const { orderId, sessionId, waybill, pkgRef, parcelRef, isCod } = req.body;
+  const { orderId, sessionId, waybill, pkgRef, parcelRef } = req.body;
 
   if (!orderId || !sessionId || !waybill || !pkgRef || !parcelRef) {
     return res.status(400).json({ error: 'Brak wymaganych danych!' });
   }
 
-  const sessionType = isCod ? 'COD_DOMESTIC' : 'DOMESTIC';
-
-  const labelPayload = {
+  const payload = {
     labelSearchParams: {
       policy: 'STOP_ON_FIRST_ERROR',
       session: {
@@ -173,7 +170,7 @@ app.post('/api/dpd/download-label', async (req, res) => {
             ]
           }
         ],
-        type: sessionType
+        type: 'COD_DOMESTIC'
       },
       documentId: `LABEL-${orderId}`
     },
@@ -183,12 +180,12 @@ app.post('/api/dpd/download-label', async (req, res) => {
     variant: 'STANDARD'
   };
 
-  console.log('➡️ Payload pobierania etykiety:', JSON.stringify(labelPayload, null, 2));
+  console.log('➡️ Payload pobierania etykiety:', JSON.stringify(payload, null, 2));
 
   try {
-    const dpdRes = await axios.post(dpdLabelsUrl, labelPayload, {
+    const dpdRes = await axios.post(dpdLabelsUrl, payload, {
       headers: {
-        Authorization: `Basic ${authString}`,
+        'Authorization': `Basic ${authString}`,
         'Content-Type': 'application/json',
         'x-dpd-fid': dpdFid
       }
@@ -197,12 +194,14 @@ app.post('/api/dpd/download-label', async (req, res) => {
     const labelData = dpdRes.data.documentData;
 
     if (!labelData) {
+      console.error('❌ Brak danych etykiety!');
       return res.status(400).json({ error: 'Brak danych etykiety!' });
     }
 
     const buffer = Buffer.from(labelData, 'base64');
     res.setHeader('Content-Type', 'application/pdf');
     res.send(buffer);
+
   } catch (err) {
     console.error('❌ Błąd pobierania etykiety:', err?.response?.data || err.message);
     res.status(500).json({
@@ -212,9 +211,6 @@ app.post('/api/dpd/download-label', async (req, res) => {
   }
 });
 
-// ====================
-// START SERVERA
-// ====================
 app.listen(PORT, () => {
   console.log(`🚀 Serwer DPD działa na http://localhost:${PORT}`);
 });
