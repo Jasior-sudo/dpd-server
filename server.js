@@ -11,7 +11,7 @@ app.use(express.json());
 
 // 🔧 Supabase
 const supabaseUrl = 'https://nymqqcobbzmnngkgxczc.supabase.co';
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...';
+const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im55bXFxY29iYnptbm5na2d4Y3pjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0MDkyODY4MywiZXhwIjoyMDU2NTA0NjgzfQ.zrh4GnP8BnbMZ_oa2dzhoP1Y_8RJSxd-oktLP00wREI';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // 🔧 Dane DPD
@@ -40,7 +40,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
   }
 
   try {
-    // Adres dostawy
+    // Pobranie adresu z Supabase
     const { data: address, error: addressError } = await supabase
       .from('order_addresses')
       .select('*')
@@ -49,27 +49,27 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       .single();
 
     if (addressError || !address) {
+      console.error('❌ Brak adresu dostawy:', addressError);
       return res.status(404).json({ error: 'Brak adresu dostawy!' });
     }
 
-    // Dane zamówienia
+    // ✅ Pobranie zamówienia, aby sprawdzić metodę płatności
     const { data: order, error: orderError } = await supabase
       .from('orders')
       .select('*')
       .eq('order_id', orderId)
-      .maybeSingle();
+      .single();
 
     if (orderError || !order) {
+      console.error('❌ Brak zamówienia:', orderError);
       return res.status(404).json({ error: 'Brak zamówienia!' });
     }
 
-    const postalCode = (address.postcode || '').replace(/[^0-9]/g, '');
-    const phone = (address.phone || '').replace(/[^0-9]/g, '');
-    const phoneFormatted = phone.startsWith('48') ? phone : `48${phone}`;
-
     const now = Date.now();
+    const postalCode = (address.postcode || '').replace(/[^0-9]/g, '');
+    const phoneRaw = (address.phone || '').replace(/[^0-9]/g, '');
+    const phone = phoneRaw.startsWith('48') ? phoneRaw : `48${phoneRaw}`;
 
-    // Payload dla DPD
     const payload = {
       generationPolicy: 'STOP_ON_FIRST_ERROR',
       packages: [{
@@ -81,8 +81,8 @@ app.post('/api/dpd/generate-package', async (req, res) => {
           city: address.city,
           countryCode: address.country_code || 'PL',
           postalCode,
-          phone: phoneFormatted,
-          email: order.email || 'zamowienia@smilk.pl'
+          phone,
+          email: 'zamowienia@smilk.pl'
         },
         sender: {
           company: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
@@ -91,7 +91,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
           city: 'Sadki',
           countryCode: 'PL',
           postalCode: '89110',
-          phone: '48662027792',
+          phone: '48661103013',
           email: 'zamowienia@smilk.pl'
         },
         payerFID: parseInt(dpdFid),
@@ -102,14 +102,16 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       }]
     };
 
-    // Dodaj COD jeśli forma płatności to Pobranie
+    // ✅ DODANIE COD, jeżeli płatność to "pobranie"
     if (order.payment_method?.toLowerCase().includes('pobranie')) {
       payload.packages[0].cod = {
         amount: parseFloat(order.sum),
         currency: order.currency_name || 'PLN',
         beneficiary: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
-        accountNumber: 'PL08116022020000000628769404' // Konto dla COD
+        accountNumber: 'PL08116022020000000628769404' // <- Twój numer konta
       };
+
+      console.log('✅ Dodano COD do paczki:', payload.packages[0].cod);
     }
 
     console.log('➡️ Payload wysyłany do DPD:', JSON.stringify(payload, null, 2));
@@ -124,7 +126,9 @@ app.post('/api/dpd/generate-package', async (req, res) => {
 
     const dpdData = dpdRes.data;
 
-    if (!dpdData.sessionId || !dpdData.packages[0]?.parcels[0]?.waybill) {
+    console.log('✅ Odpowiedź z DPD:', JSON.stringify(dpdData, null, 2));
+
+    if (!dpdData.sessionId || !dpdData.packages?.[0]?.parcels?.[0]?.waybill) {
       return res.status(400).json({ error: 'Brak sessionId lub waybill!' });
     }
 
