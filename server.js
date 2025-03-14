@@ -40,7 +40,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
   }
 
   try {
-    // Pobranie adresu z Supabase
+    // Pobranie adresu dostawy
     const { data: address, error: addressError } = await supabase
       .from('order_addresses')
       .select('*')
@@ -53,12 +53,12 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       return res.status(404).json({ error: 'Brak adresu dostawy!' });
     }
 
-    // ✅ Pobranie zamówienia, aby sprawdzić metodę płatności
+    // Pobranie danych zamówienia
     const { data: order, error: orderError } = await supabase
       .from('orders')
       .select('*')
       .eq('order_id', orderId)
-      .single();
+      .maybeSingle();
 
     if (orderError || !order) {
       console.error('❌ Brak zamówienia:', orderError);
@@ -66,14 +66,18 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     }
 
     const now = Date.now();
+    const pkgRef = `PKG-${orderId}-${now}`;
+    const parcelRef = `PARCEL-${orderId}-${now}`;
+
     const postalCode = (address.postcode || '').replace(/[^0-9]/g, '');
     const phoneRaw = (address.phone || '').replace(/[^0-9]/g, '');
     const phone = phoneRaw.startsWith('48') ? phoneRaw : `48${phoneRaw}`;
 
+    // Bazowy payload
     const payload = {
       generationPolicy: 'STOP_ON_FIRST_ERROR',
       packages: [{
-        reference: `PKG-${orderId}-${now}`,
+        reference: pkgRef,
         receiver: {
           company: address.company || `${address.firstname} ${address.lastname}`,
           name: `${address.firstname} ${address.lastname}`,
@@ -82,7 +86,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
           countryCode: address.country_code || 'PL',
           postalCode,
           phone,
-          email: 'zamowienia@smilk.pl'
+          email: order.email || 'zamowienia@smilk.pl'
         },
         sender: {
           company: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
@@ -96,21 +100,20 @@ app.post('/api/dpd/generate-package', async (req, res) => {
         },
         payerFID: parseInt(dpdFid),
         parcels: [{
-          reference: `PARCEL-${orderId}-${now}`,
+          reference: parcelRef,
           weight: 10
         }]
       }]
     };
 
-    // ✅ DODANIE COD, jeżeli płatność to "pobranie"
+    // Obsługa COD (pobranie)
     if (order.payment_method?.toLowerCase().includes('pobranie')) {
       payload.packages[0].cod = {
         amount: parseFloat(order.sum),
         currency: order.currency_name || 'PLN',
         beneficiary: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
-        accountNumber: 'PL08116022020000000628769404' // <- Twój numer konta
+        accountNumber: 'PL08116022020000000628769404'
       };
-
       console.log('✅ Dodano COD do paczki:', payload.packages[0].cod);
     }
 
@@ -126,8 +129,6 @@ app.post('/api/dpd/generate-package', async (req, res) => {
 
     const dpdData = dpdRes.data;
 
-    console.log('✅ Odpowiedź z DPD:', JSON.stringify(dpdData, null, 2));
-
     if (!dpdData.sessionId || !dpdData.packages?.[0]?.parcels?.[0]?.waybill) {
       return res.status(400).json({ error: 'Brak sessionId lub waybill!' });
     }
@@ -135,6 +136,8 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     res.json({
       sessionId: dpdData.sessionId,
       waybill: dpdData.packages[0].parcels[0].waybill,
+      pkgRef,
+      parcelRef,
       rawResponse: dpdData
     });
 
@@ -151,24 +154,11 @@ app.post('/api/dpd/generate-package', async (req, res) => {
 // POBIERZ ETYKIETĘ DPD
 // ==========================
 app.post('/api/dpd/download-label', async (req, res) => {
-  const { orderId, sessionId, waybill } = req.body;
+  const { orderId, sessionId, waybill, pkgRef, parcelRef } = req.body;
 
-  if (!orderId || !sessionId || !waybill) {
+  if (!orderId || !sessionId || !waybill || !pkgRef || !parcelRef) {
     return res.status(400).json({ error: 'Brak wymaganych danych!' });
   }
-
-  // Pobieramy zamówienie, żeby sprawdzić czy to COD
-  const { data: order, error: orderError } = await supabase
-    .from('orders')
-    .select('*')
-    .eq('order_id', orderId)
-    .single();
-
-  if (orderError || !order) {
-    return res.status(404).json({ error: 'Brak zamówienia!' });
-  }
-
-  const sessionType = order.payment_method?.toLowerCase().includes('pobranie') ? 'COD_DOMESTIC' : 'DOMESTIC';
 
   const payload = {
     labelSearchParams: {
@@ -176,13 +166,13 @@ app.post('/api/dpd/download-label', async (req, res) => {
       session: {
         sessionId,
         packages: [{
-          reference: `PKG-${orderId}`,
+          reference: pkgRef,
           parcels: [{
-            reference: `PARCEL-${orderId}`,
+            reference: parcelRef,
             waybill
           }]
         }],
-        type: sessionType
+        type: 'COD_DOMESTIC' // albo 'DOMESTIC', ale COD_DOMESTIC lepsze przy pobraniach!
       },
       documentId: `LABEL-${orderId}`
     },
