@@ -58,6 +58,44 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     const phoneRaw = (address.phone || '').replace(/[^0-9]/g, '');
     const phone = phoneRaw.startsWith('48') ? phoneRaw : `48${phoneRaw}`;
 
+   app.post('/api/dpd/generate-package', async (req, res) => {
+  const { orderId } = req.body;
+
+  if (!orderId) {
+    return res.status(400).json({ error: 'Brak orderId!' });
+  }
+
+  try {
+    // Pobranie adresu
+    const { data: address, error: addressError } = await supabase
+      .from('order_addresses')
+      .select('*')
+      .eq('order_id', orderId)
+      .eq('type', 'delivery')
+      .single();
+
+    if (addressError || !address) {
+      return res.status(404).json({ error: 'Brak adresu dostawy!' });
+    }
+
+    // Pobranie danych zamówienia
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('order_id', orderId)
+      .maybeSingle();
+
+    if (orderError || !order) {
+      return res.status(404).json({ error: 'Brak zamówienia!' });
+    }
+
+    const postalCode = (address.postcode || '').replace(/[^0-9]/g, '');
+    const phone = (address.phone || '').replace(/[^0-9]/g, '');
+    const phoneFormatted = phone.startsWith('48') ? phone : `48${phone}`;
+
+    const now = Date.now();
+
+    // ✅ Podstawa payloadu DPD
     const payload = {
       generationPolicy: 'STOP_ON_FIRST_ERROR',
       packages: [{
@@ -69,8 +107,8 @@ app.post('/api/dpd/generate-package', async (req, res) => {
           city: address.city,
           countryCode: address.country_code || 'PL',
           postalCode,
-          phone,
-          email: 'zamowienia@smilk.pl'
+          phone: phoneFormatted,
+          email: order.email || 'zamowienia@smilk.pl'
         },
         sender: {
           company: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
@@ -79,7 +117,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
           city: 'Sadki',
           countryCode: 'PL',
           postalCode: '89110',
-          phone: '48661103013',
+          phone: '48662027792',
           email: 'zamowienia@smilk.pl'
         },
         payerFID: parseInt(dpdFid),
@@ -89,6 +127,16 @@ app.post('/api/dpd/generate-package', async (req, res) => {
         }]
       }]
     };
+
+    // ✅ DODAJEMY COD jeżeli forma płatności to "Pobranie"
+    if (order.payment_method?.toLowerCase().includes('pobranie')) {
+      payload.packages[0].cod = {
+        amount: parseFloat(order.sum),        // Kwota do pobrania
+        currency: order.currency_name || 'PLN',
+        beneficiary: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
+        accountNumber: 'PL08116022020000000628769404'  // Twój numer konta DPD pobrania!
+      };
+    }
 
     console.log('➡️ Payload wysyłany do DPD:', JSON.stringify(payload, null, 2));
 
@@ -102,9 +150,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
 
     const dpdData = dpdRes.data;
 
-    console.log('✅ Odpowiedź z DPD:', JSON.stringify(dpdData, null, 2));
-
-    if (!dpdData.sessionId || !dpdData.packages?.[0]?.parcels?.[0]?.waybill) {
+    if (!dpdData.sessionId || !dpdData.packages[0]?.parcels[0]?.waybill) {
       return res.status(400).json({ error: 'Brak sessionId lub waybill!' });
     }
 
@@ -122,6 +168,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     });
   }
 });
+
 
 // ==========================
 // POBIERZ ETYKIETĘ DPD
