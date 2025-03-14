@@ -24,20 +24,23 @@ const dpdLabelsUrl = 'https://dpdservices.dpd.com.pl/public/shipment/v1/generate
 
 const authString = Buffer.from(`${dpdLogin}:${dpdPassword}`).toString('base64');
 
-// Endpoint testowy
+// Test endpoint
 app.get('/', (req, res) => {
   res.send('🚀 DPD Server działa!');
 });
 
-// ======================
+// ==========================
 // GENERUJ PACZKĘ DPD
-// ======================
+// ==========================
 app.post('/api/dpd/generate-package', async (req, res) => {
   const { orderId } = req.body;
 
-  if (!orderId) return res.status(400).json({ error: 'Brak orderId!' });
+  if (!orderId) {
+    return res.status(400).json({ error: 'Brak orderId!' });
+  }
 
   try {
+    // Pobranie adresu z Supabase
     const { data: address, error } = await supabase
       .from('order_addresses')
       .select('*')
@@ -50,44 +53,42 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       return res.status(404).json({ error: 'Brak adresu dostawy!' });
     }
 
+    const now = Date.now(); // unikalność referencji
     const postalCode = (address.postcode || '').replace(/[^0-9]/g, '');
-    const phone = (address.phone || '').replace(/[^0-9]/g, '');
-    const phoneFormatted = phone.startsWith('48') ? phone : `48${phone}`;
+    const phoneRaw = (address.phone || '').replace(/[^0-9]/g, '');
+    const phone = phoneRaw.startsWith('48') ? phoneRaw : `48${phoneRaw}`;
 
-   const now = Date.now();
-
-const payload = {
-  generationPolicy: 'STOP_ON_FIRST_ERROR',
-  packages: [{
-    reference: `PKG-${orderId}-${now}`,
-    receiver: {
-      company: address.company || `${address.firstname} ${address.lastname}`,
-      name: `${address.firstname} ${address.lastname}`,
-      address: address.street1,
-      city: address.city,
-      countryCode: address.country_code || 'PL',
-      postalCode,
-      phone: phoneFormatted,
-      email: 'zamowienia@smilk.pl'
-    },
-    sender: {
-      company: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
-      name: 'Nicolas Łusiak',
-      address: 'Wyrzyska 48',
-      city: 'Sadki',
-      countryCode: 'PL',
-      postalCode: '89110',
-      phone: '48661103013',
-      email: 'zamowienia@smilk.pl'
-    },
-    payerFID: parseInt(dpdFid),
-    parcels: [{
-      reference: `PARCEL-${orderId}-${now}`,
-      weight: 10
-    }]
-  }]
-};
-
+    const payload = {
+      generationPolicy: 'STOP_ON_FIRST_ERROR',
+      packages: [{
+        reference: `PKG-${orderId}-${now}`,
+        receiver: {
+          company: address.company || `${address.firstname} ${address.lastname}`,
+          name: `${address.firstname} ${address.lastname}`,
+          address: address.street1,
+          city: address.city,
+          countryCode: address.country_code || 'PL',
+          postalCode,
+          phone,
+          email: 'zamowienia@smilk.pl'
+        },
+        sender: {
+          company: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
+          name: 'Nicolas Łusiak',
+          address: 'Wyrzyska 48',
+          city: 'Sadki',
+          countryCode: 'PL',
+          postalCode: '89110',
+          phone: '48661103013',
+          email: 'zamowienia@smilk.pl'
+        },
+        payerFID: parseInt(dpdFid),
+        parcels: [{
+          reference: `PARCEL-${orderId}-${now}`,
+          weight: 10
+        }]
+      }]
+    };
 
     console.log('➡️ Payload wysyłany do DPD:', JSON.stringify(payload, null, 2));
 
@@ -99,11 +100,11 @@ const payload = {
       }
     });
 
-    console.log('✅ Odpowiedź z DPD:', dpdRes.data);
-
     const dpdData = dpdRes.data;
 
-    if (!dpdData.sessionId || !dpdData.packages[0]?.parcels[0]?.waybill) {
+    console.log('✅ Odpowiedź z DPD:', JSON.stringify(dpdData, null, 2));
+
+    if (!dpdData.sessionId || !dpdData.packages?.[0]?.parcels?.[0]?.waybill) {
       return res.status(400).json({ error: 'Brak sessionId lub waybill!' });
     }
 
@@ -122,9 +123,9 @@ const payload = {
   }
 });
 
-// ======================
+// ==========================
 // POBIERZ ETYKIETĘ DPD
-// ======================
+// ==========================
 app.post('/api/dpd/download-label', async (req, res) => {
   const { orderId, sessionId, waybill } = req.body;
 
@@ -138,9 +139,9 @@ app.post('/api/dpd/download-label', async (req, res) => {
       session: {
         sessionId,
         packages: [{
-          reference: `PKG-${orderId}`,
+          reference: `PKG-${orderId}`, // referencja powinna być taka sama jak przy tworzeniu paczki
           parcels: [{
-            reference: `PARCEL-${orderId}`,
+            reference: `PARCEL-${orderId}`, // referencja jw.
             waybill
           }]
         }],
@@ -177,11 +178,17 @@ app.post('/api/dpd/download-label', async (req, res) => {
     res.send(buffer);
 
   } catch (err) {
-    console.error('❌ Błąd pobierania etykiety:', err.response?.data || err.message);
-    res.status(500).json({ error: 'Błąd pobierania etykiety', details: err.message });
+    console.error('❌ Błąd pobierania etykiety:', err?.response?.data || err.message);
+    res.status(500).json({
+      error: 'Błąd pobierania etykiety',
+      details: err?.response?.data || err.message
+    });
   }
 });
 
+// ==========================
+// START SERVERA
+// ==========================
 app.listen(PORT, () => {
   console.log(`🚀 Serwer DPD działa na http://localhost:${PORT}`);
 });
