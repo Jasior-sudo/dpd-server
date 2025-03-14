@@ -11,7 +11,7 @@ app.use(express.json());
 
 // 🔧 Supabase
 const supabaseUrl = 'https://nymqqcobbzmnngkgxczc.supabase.co';
-const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im55bXFxY29iYnptbm5na2d4Y3pjIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc0MDkyODY4MywiZXhwIjoyMDU2NTA0NjgzfQ.zrh4GnP8BnbMZ_oa2dzhoP1Y_8RJSxd-oktLP00wREI';
+const supabaseKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...';
 const supabase = createClient(supabaseUrl, supabaseKey);
 
 // 🔧 Dane DPD
@@ -40,33 +40,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
   }
 
   try {
-    // Pobranie adresu z Supabase
-    const { data: address, error } = await supabase
-      .from('order_addresses')
-      .select('*')
-      .eq('order_id', orderId)
-      .eq('type', 'delivery')
-      .single();
-
-    if (error || !address) {
-      console.error('❌ Brak adresu dostawy:', error);
-      return res.status(404).json({ error: 'Brak adresu dostawy!' });
-    }
-
-    const now = Date.now(); // unikalność referencji
-    const postalCode = (address.postcode || '').replace(/[^0-9]/g, '');
-    const phoneRaw = (address.phone || '').replace(/[^0-9]/g, '');
-    const phone = phoneRaw.startsWith('48') ? phoneRaw : `48${phoneRaw}`;
-
-   app.post('/api/dpd/generate-package', async (req, res) => {
-  const { orderId } = req.body;
-
-  if (!orderId) {
-    return res.status(400).json({ error: 'Brak orderId!' });
-  }
-
-  try {
-    // Pobranie adresu
+    // Adres dostawy
     const { data: address, error: addressError } = await supabase
       .from('order_addresses')
       .select('*')
@@ -78,7 +52,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       return res.status(404).json({ error: 'Brak adresu dostawy!' });
     }
 
-    // Pobranie danych zamówienia
+    // Dane zamówienia
     const { data: order, error: orderError } = await supabase
       .from('orders')
       .select('*')
@@ -95,7 +69,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
 
     const now = Date.now();
 
-    // ✅ Podstawa payloadu DPD
+    // Payload dla DPD
     const payload = {
       generationPolicy: 'STOP_ON_FIRST_ERROR',
       packages: [{
@@ -128,13 +102,13 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       }]
     };
 
-    // ✅ DODAJEMY COD jeżeli forma płatności to "Pobranie"
+    // Dodaj COD jeśli forma płatności to Pobranie
     if (order.payment_method?.toLowerCase().includes('pobranie')) {
       payload.packages[0].cod = {
-        amount: parseFloat(order.sum),        // Kwota do pobrania
+        amount: parseFloat(order.sum),
         currency: order.currency_name || 'PLN',
         beneficiary: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
-        accountNumber: 'PL08116022020000000628769404'  // Twój numer konta DPD pobrania!
+        accountNumber: 'PL08116022020000000628769404' // Konto dla COD
       };
     }
 
@@ -169,7 +143,6 @@ app.post('/api/dpd/generate-package', async (req, res) => {
   }
 });
 
-
 // ==========================
 // POBIERZ ETYKIETĘ DPD
 // ==========================
@@ -186,9 +159,9 @@ app.post('/api/dpd/download-label', async (req, res) => {
       session: {
         sessionId,
         packages: [{
-          reference: `PKG-${orderId}`, // referencja powinna być taka sama jak przy tworzeniu paczki
+          reference: `PKG-${orderId}`,
           parcels: [{
-            reference: `PARCEL-${orderId}`, // referencja jw.
+            reference: `PARCEL-${orderId}`,
             waybill
           }]
         }],
