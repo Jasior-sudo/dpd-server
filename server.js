@@ -1,0 +1,154 @@
+const express = require('express');
+const axios = require('axios');
+const cors = require('cors');
+const { createClient } = require('@supabase/supabase-js');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(cors());
+app.use(express.json());
+
+// 🔧 Supabase
+const supabaseUrl = 'https://nymqqcobbzmnngkgxczc.supabase.co';
+const supabaseKey = 'TWÓJ_SUPABASE_SERVICE_ROLE_KEY'; // zmień na SECRET z Supabase!
+const supabase = createClient(supabaseUrl, supabaseKey);
+
+// 🔧 Dane DPD
+const dpdLogin = '40413101';
+const dpdPassword = 'iZRzZpcHbPswhwdg';
+const dpdFid = '404131';
+
+const dpdPackagesUrl = 'https://dpdservices.dpd.com.pl/public/shipment/v1/generatePackagesNumbers';
+const dpdLabelsUrl = 'https://dpdservices.dpd.com.pl/public/shipment/v1/generateSpedLabels';
+
+const authString = Buffer.from(`${dpdLogin}:${dpdPassword}`).toString('base64');
+
+app.get('/', (req, res) => {
+  res.send('DPD Server działa!');
+});
+
+app.post('/api/dpd/generate-package', async (req, res) => {
+  const { orderId } = req.body;
+
+  if (!orderId) return res.status(400).json({ error: 'Brak orderId!' });
+
+  try {
+    const { data: address, error } = await supabase
+      .from('order_addresses')
+      .select('*')
+      .eq('order_id', orderId)
+      .eq('type', 'delivery')
+      .single();
+
+    if (error || !address) {
+      return res.status(404).json({ error: 'Brak adresu dostawy!' });
+    }
+
+    const payload = {
+      generationPolicy: 'STOP_ON_FIRST_ERROR',
+      packages: [{
+        reference: `PKG-${orderId}`,
+        receiver: {
+          company: address.company || `${address.firstname} ${address.lastname}`,
+          name: `${address.firstname} ${address.lastname}`,
+          address: address.street1,
+          city: address.city,
+          countryCode: address.country_code || 'PL',
+          postalCode: address.postcode.replace(/[^0-9]/g, ''),
+          phone: address.phone.replace(/[^0-9]/g, '').padStart(9, '48'),
+          email: 'zamowienia@smilk.pl'
+        },
+        sender: {
+          company: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
+          name: 'Nicolas Łusiak',
+          address: 'Wyrzyska 48',
+          city: 'Sadki',
+          countryCode: 'PL',
+          postalCode: '89110',
+          phone: '48661103013',
+          email: 'zamowienia@smilk.pl'
+        },
+        payerFID: parseInt(dpdFid),
+        parcels: [{
+          reference: `PARCEL-${orderId}`,
+          weight: 10
+        }]
+      }]
+    };
+
+    const dpdRes = await axios.post(dpdPackagesUrl, payload, {
+      headers: {
+        'Authorization': `Basic ${authString}`,
+        'Content-Type': 'application/json',
+        'x-dpd-fid': dpdFid
+      }
+    });
+
+    const dpdData = dpdRes.data;
+
+    res.json({
+      sessionId: dpdData.sessionId,
+      waybill: dpdData.packages[0].parcels[0].waybill,
+      rawResponse: dpdData
+    });
+
+  } catch (err) {
+    console.error('❌ Błąd:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Błąd DPD', details: err.message });
+  }
+});
+
+app.post('/api/dpd/download-label', async (req, res) => {
+  const { orderId, sessionId, waybill } = req.body;
+
+  if (!orderId || !sessionId || !waybill) {
+    return res.status(400).json({ error: 'Brak danych!' });
+  }
+
+  const payload = {
+    labelSearchParams: {
+      policy: 'STOP_ON_FIRST_ERROR',
+      session: {
+        sessionId,
+        packages: [{
+          reference: `PKG-${orderId}`,
+          parcels: [{
+            reference: `PARCEL-${orderId}`,
+            waybill
+          }]
+        }],
+        type: 'DOMESTIC'
+      },
+      documentId: `LABEL-${orderId}`
+    },
+    outputDocFormat: 'PDF',
+    format: 'LBL_PRINTER',
+    outputType: 'BIC3',
+    variant: 'STANDARD'
+  };
+
+  try {
+    const dpdRes = await axios.post(dpdLabelsUrl, payload, {
+      headers: {
+        'Authorization': `Basic ${authString}`,
+        'Content-Type': 'application/json',
+        'x-dpd-fid': dpdFid
+      }
+    });
+
+    const labelData = dpdRes.data.documentData;
+
+    const buffer = Buffer.from(labelData, 'base64');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.send(buffer);
+
+  } catch (err) {
+    console.error('❌ Błąd pobierania etykiety:', err.response?.data || err.message);
+    res.status(500).json({ error: 'Błąd pobierania etykiety', details: err.message });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 Serwer DPD działa na http://localhost:${PORT}`);
+});
