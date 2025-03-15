@@ -36,6 +36,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
   }
 
   try {
+    // Pobierz dane adresowe i zamówienie z Supabase
     const { data: address, error: addressError } = await supabase
       .from('order_addresses')
       .select('*')
@@ -65,7 +66,8 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     const phoneRaw = (address.phone || '').replace(/[^0-9]/g, '');
     const phone = phoneRaw.startsWith('48') ? phoneRaw : `48${phoneRaw}`;
 
-    const payload = {
+    // PODSTAWOWY PAYLOAD
+    const packagePayload = {
       generationPolicy: 'STOP_ON_FIRST_ERROR',
       packages: [
         {
@@ -76,8 +78,8 @@ app.post('/api/dpd/generate-package', async (req, res) => {
             address: address.street1,
             city: address.city,
             countryCode: address.country_code || 'PL',
-            postalCode,
-            phone,
+            postalCode: postalCode,
+            phone: phone,
             email: order.email || 'zamowienia@smilk.pl'
           },
           sender: {
@@ -90,32 +92,40 @@ app.post('/api/dpd/generate-package', async (req, res) => {
             phone: '48661103013',
             email: 'zamowienia@smilk.pl'
           },
-          payerFID: parseInt(dpdFid),
+          payerFID: 404131,
           parcels: [
             {
               reference: parcelRef,
-              weight: 10
+              weight: 10,
+              weightAdr: 0,
+              sizeX: 30,
+              sizeY: 40,
+              sizeZ: 50
             }
           ]
         }
       ]
     };
 
-    // Dodaj COD bez services
+    // SPRAWDZENIE CZY POBRANIE
     if (order.payment_method?.toLowerCase().includes('pobranie')) {
-      payload.packages[0].cod = {
-        amount: parseFloat(order.sum),
-        currency: order.currency_name || 'PLN',
-        beneficiary: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
-        accountNumber: 'PL08116022020000000628769404'
-      };
+      packagePayload.packages[0].services = [
+        {
+          code: 'COD',
+          attributes: [
+            { code: 'AMOUNT', value: `${parseFloat(order.sum)}` },
+            { code: 'CURRENCY', value: order.currency_name || 'PLN' }
+          ]
+        }
+      ];
 
-      console.log('✅ Dodano COD:', payload.packages[0].cod);
+      console.log('✅ Dodano COD service do paczki:', packagePayload.packages[0].services);
     }
 
-    console.log('➡️ Payload wysyłany do DPD:', JSON.stringify(payload, null, 2));
+    console.log('➡️ Payload wysyłany do DPD:', JSON.stringify(packagePayload, null, 2));
 
-    const dpdRes = await axios.post(dpdPackagesUrl, payload, {
+    // WYSYŁKA DO DPD API
+    const dpdRes = await axios.post(dpdPackagesUrl, packagePayload, {
       headers: {
         'Authorization': `Basic ${authString}`,
         'Content-Type': 'application/json',
@@ -126,9 +136,11 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     const dpdData = dpdRes.data;
 
     if (!dpdData.sessionId || !dpdData.packages?.[0]?.parcels?.[0]?.waybill) {
-      return res.status(400).json({ error: 'Brak sessionId lub waybill!' });
+      console.error('❌ Brak sessionId lub waybill!');
+      return res.status(400).json({ error: 'Brak sessionId lub waybill!', details: dpdData });
     }
 
+    // OK - zwracamy dane do frontu
     res.json({
       sessionId: dpdData.sessionId,
       waybill: dpdData.packages[0].parcels[0].waybill,
@@ -145,6 +157,7 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     });
   }
 });
+
 
 // POBIERZ ETYKIETĘ DPD
 app.post('/api/dpd/download-label', async (req, res) => {
