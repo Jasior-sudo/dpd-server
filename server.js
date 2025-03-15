@@ -65,26 +65,23 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     const phoneRaw = (address.phone || '').replace(/[^0-9]/g, '');
     const phone = phoneRaw.startsWith('48') ? phoneRaw : `48${phoneRaw}`;
 
-    // 🔹 Sprawdzamy czy zamówienie to PICKUP (PUDO)
     const isPickup = order.shipping_method?.toLowerCase().includes('pickup');
     const pickupPointCode = order.shipping_pickup_point;
 
     const services = [];
 
-    // Jeśli PICKUP dodajemy usługę DPD_PICKUP
     if (isPickup && pickupPointCode) {
       services.push({
         code: 'DPD_PICKUP',
         attributes: [
           {
-            code: 'PUDO_POINT_CODE',
+            code: 'PUDO',
             value: pickupPointCode
           }
         ]
       });
     }
 
-    // Obsługa COD (pobranie)
     if (order.payment_method?.toLowerCase().includes('pobranie')) {
       services.push({
         code: 'COD',
@@ -100,16 +97,28 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       packages: [
         {
           reference: pkgRef,
-          receiver: {
-            company: address.company || `${address.firstname} ${address.lastname}`,
-            name: `${address.firstname} ${address.lastname}`,
-            address: address.street1 || "PICKUP",
-            city: address.city || "PICKUP",
-            countryCode: address.country_code || 'PL',
-            postalCode: postalCode || '00000',
-            phone: phone,
-            email: order.email || 'zamowienia@smilk.pl'
-          },
+          ...(isPickup && pickupPointCode
+            ? {
+                pudoReceiver: {
+                  company: address.company || `${address.firstname} ${address.lastname}`,
+                  name: `${address.firstname} ${address.lastname}`,
+                  countryCode: address.country_code || 'PL',
+                  phone: phone,
+                  email: order.email || 'zamowienia@smilk.pl'
+                }
+              }
+            : {
+                receiver: {
+                  company: address.company || `${address.firstname} ${address.lastname}`,
+                  name: `${address.firstname} ${address.lastname}`,
+                  address: address.street1,
+                  city: address.city,
+                  countryCode: address.country_code || 'PL',
+                  postalCode: postalCode,
+                  phone: phone,
+                  email: order.email || 'zamowienia@smilk.pl'
+                }
+              }),
           sender: {
             company: 'PRZEDSIĘBIORSTWO PRODUKCYJNO-HANDLOWO-USŁUGOWE PROSZKI MLECZNE',
             name: 'Nicolas Łusiak',
@@ -160,7 +169,6 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       parcelRef,
       rawResponse: dpdData
     });
-
   } catch (err) {
     console.error('❌ Błąd DPD:', err?.response?.data || err.message);
     res.status(500).json({
@@ -169,7 +177,6 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     });
   }
 });
-
 
 // POBIERZ ETYKIETĘ DPD
 app.post('/api/dpd/download-label', async (req, res) => {
@@ -195,7 +202,7 @@ app.post('/api/dpd/download-label', async (req, res) => {
             ]
           }
         ],
-        type: 'DOMESTIC'  // <-- WAŻNE: zmiana na DOMESTIC!
+        type: 'PUDO_DOMESTIC' // jeśli to pickup, zmień na DOMESTIC jeśli nie pickup
       }
     },
     outputDocFormat: 'PDF',
@@ -225,7 +232,6 @@ app.post('/api/dpd/download-label', async (req, res) => {
     const buffer = Buffer.from(labelData, 'base64');
     res.setHeader('Content-Type', 'application/pdf');
     res.send(buffer);
-
   } catch (err) {
     console.error('❌ Błąd pobierania etykiety:', err?.response?.data || err.message);
     res.status(500).json({
@@ -234,7 +240,6 @@ app.post('/api/dpd/download-label', async (req, res) => {
     });
   }
 });
-
 
 app.listen(PORT, () => {
   console.log(`🚀 Serwer DPD działa na http://localhost:${PORT}`);
