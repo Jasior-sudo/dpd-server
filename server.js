@@ -179,12 +179,15 @@ app.post('/api/dpd/generate-package', async (req, res) => {
 });
 
 // POBIERZ ETYKIETĘ DPD
+// POBIERZ ETYKIETĘ DPD
 app.post('/api/dpd/download-label', async (req, res) => {
-  const { orderId, sessionId, waybill, pkgRef, parcelRef } = req.body;
+  const { orderId, sessionId, waybill, pkgRef, parcelRef, isPickup } = req.body;
 
   if (!orderId || !sessionId || !waybill || !pkgRef || !parcelRef) {
     return res.status(400).json({ error: 'Brak wymaganych danych!' });
   }
+
+  const sessionType = isPickup ? 'PUDO_DOMESTIC' : 'DOMESTIC';
 
   const payload = {
     labelSearchParams: {
@@ -202,7 +205,7 @@ app.post('/api/dpd/download-label', async (req, res) => {
             ]
           }
         ],
-        type: 'PUDO_DOMESTIC' // jeśli to pickup, zmień na DOMESTIC jeśli nie pickup
+        type: sessionType
       }
     },
     outputDocFormat: 'PDF',
@@ -240,6 +243,7 @@ app.post('/api/dpd/download-label', async (req, res) => {
     });
   }
 });
+
 
 app.listen(PORT, () => {
   console.log(`🚀 Serwer DPD działa na http://localhost:${PORT}`);
