@@ -36,7 +36,6 @@ app.post('/api/dpd/generate-package', async (req, res) => {
   }
 
   try {
-    // Pobierz dane adresowe i zamówienie z Supabase
     const { data: address, error: addressError } = await supabase
       .from('order_addresses')
       .select('*')
@@ -66,7 +65,36 @@ app.post('/api/dpd/generate-package', async (req, res) => {
     const phoneRaw = (address.phone || '').replace(/[^0-9]/g, '');
     const phone = phoneRaw.startsWith('48') ? phoneRaw : `48${phoneRaw}`;
 
-    // PODSTAWOWY PAYLOAD
+    // 🔹 Sprawdzamy czy zamówienie to PICKUP (PUDO)
+    const isPickup = order.shipping_method?.toLowerCase().includes('pickup');
+    const pickupPointCode = order.shipping_pickup_point;
+
+    const services = [];
+
+    // Jeśli PICKUP dodajemy usługę DPD_PICKUP
+    if (isPickup && pickupPointCode) {
+      services.push({
+        code: 'DPD_PICKUP',
+        attributes: [
+          {
+            code: 'PUDO_POINT_CODE',
+            value: pickupPointCode
+          }
+        ]
+      });
+    }
+
+    // Obsługa COD (pobranie)
+    if (order.payment_method?.toLowerCase().includes('pobranie')) {
+      services.push({
+        code: 'COD',
+        attributes: [
+          { code: 'AMOUNT', value: `${parseFloat(order.sum)}` },
+          { code: 'CURRENCY', value: order.currency_name || 'PLN' }
+        ]
+      });
+    }
+
     const packagePayload = {
       generationPolicy: 'STOP_ON_FIRST_ERROR',
       packages: [
@@ -75,10 +103,10 @@ app.post('/api/dpd/generate-package', async (req, res) => {
           receiver: {
             company: address.company || `${address.firstname} ${address.lastname}`,
             name: `${address.firstname} ${address.lastname}`,
-            address: address.street1,
-            city: address.city,
+            address: address.street1 || "PICKUP",
+            city: address.city || "PICKUP",
             countryCode: address.country_code || 'PL',
-            postalCode: postalCode,
+            postalCode: postalCode || '00000',
             phone: phone,
             email: order.email || 'zamowienia@smilk.pl'
           },
@@ -102,29 +130,14 @@ app.post('/api/dpd/generate-package', async (req, res) => {
               sizeY: 40,
               sizeZ: 50
             }
-          ]
+          ],
+          services: services.length > 0 ? services : undefined
         }
       ]
     };
 
-    // SPRAWDZENIE CZY POBRANIE
-    if (order.payment_method?.toLowerCase().includes('pobranie')) {
-      packagePayload.packages[0].services = [
-        {
-          code: 'COD',
-          attributes: [
-            { code: 'AMOUNT', value: `${parseFloat(order.sum)}` },
-            { code: 'CURRENCY', value: order.currency_name || 'PLN' }
-          ]
-        }
-      ];
-
-      console.log('✅ Dodano COD service do paczki:', packagePayload.packages[0].services);
-    }
-
     console.log('➡️ Payload wysyłany do DPD:', JSON.stringify(packagePayload, null, 2));
 
-    // WYSYŁKA DO DPD API
     const dpdRes = await axios.post(dpdPackagesUrl, packagePayload, {
       headers: {
         'Authorization': `Basic ${authString}`,
@@ -140,7 +153,6 @@ app.post('/api/dpd/generate-package', async (req, res) => {
       return res.status(400).json({ error: 'Brak sessionId lub waybill!', details: dpdData });
     }
 
-    // OK - zwracamy dane do frontu
     res.json({
       sessionId: dpdData.sessionId,
       waybill: dpdData.packages[0].parcels[0].waybill,
